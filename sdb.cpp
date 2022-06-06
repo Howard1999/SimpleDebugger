@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <fstream>
 
 #include "sdb.hpp"
 
@@ -65,6 +66,12 @@ void SDebugger::exec_command(){
     }
     else if(instruction == "run" || instruction == "r"){
         run();
+    }
+    else if(instruction == "vmmap" || instruction == "m"){
+        vmmap();
+    }
+    else if(instruction == "si"){
+        step_ins();
     }
     else if(instruction == "start"){
         start();
@@ -168,6 +175,7 @@ bool SDebugger::load(const string& path){
         char str[512]={};
         sprintf(str, "program '%s' loaded. entry point 0x%lx", program_file.c_str(), elf_hdr.enter_point);
         err_msg(string(str));
+        fclose(fp);
         return true;
     }
 }
@@ -190,6 +198,59 @@ bool SDebugger::run(){
     }
     else{
         err_msg(string("run: program is not loaded."));
+        return false;
+    }
+}
+
+void SDebugger::vmmap()const{
+    if(!SDB_IS_RUNING(state)){
+        err_msg(string("vmmap: program is not running."));
+    }
+    else{
+        char maps[64]={};
+        sprintf(maps, "/proc/%d/maps", child_process);
+        ifstream fs = ifstream(maps);
+        string str;
+        while (fs.peek()!=EOF)
+        {
+            getline(fs, str);
+            istringstream ss = istringstream(str);
+
+            std::string seg, flags, pgoff, dev;
+            ino_t inode;
+            std::string file_name;
+
+            ss >> seg >> flags >> pgoff >> dev >> inode >> file_name;
+
+            unsigned long from, to;
+            sscanf(seg.c_str(), "%lx-%lx", &from, &to);
+            printf("%016lx-%016lx\t%s\t%s\n", from, to, flags.substr(0, 3).c_str(), file_name.c_str());
+        }
+    }
+}
+
+bool SDebugger::step_ins(){
+    if(SDB_IS_RUNING(state)){
+        int status;
+        ptrace(PTRACE_SINGLESTEP, child_process, 0, 0);
+        waitpid(child_process, &status, 0);
+
+        if(WIFEXITED(status)){ // check terminate
+            state &= ~SDB_STATE_PROCESS_RUNNING;
+            const int es = WEXITSTATUS(status);
+            char str[512]={};
+            if(es==0){
+                sprintf(str, "child process %d terminiated normally (code 0)", child_process);
+            }else{
+                sprintf(str, "child process %d terminiated abnormally (code %d)", child_process, es);
+            }
+            err_msg(str);
+        }
+        
+        return true;
+    }
+    else{
+        err_msg(string("si: program is not running"));
         return false;
     }
 }

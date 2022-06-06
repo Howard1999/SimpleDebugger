@@ -51,6 +51,8 @@ namespace sdb{
             void help()const;
             bool load(const std::string& cmd);
             bool run();
+            void vmmap()const;
+            bool step_ins();
             bool start();
             // state
             inline bool state_loaded()const{return SDB_IS_LOADED(state);}
