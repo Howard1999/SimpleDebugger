@@ -1,4 +1,4 @@
-load sample/hello64
+load test/script/hello64
 vmmap
 start
 vmmap

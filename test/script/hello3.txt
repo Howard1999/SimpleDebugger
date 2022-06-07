@@ -1,4 +1,4 @@
-load sample/hello64
+load test/script/hello64
 start
 b 0x4000c6
 cont
