@@ -7,10 +7,9 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
+#include <algorithm>
 
 #include "sdb.hpp"
-
-#define SDB_TEXT_BYTE_MASK          0x00000000000000FF
 
 using namespace std;
 using namespace sdb;
@@ -33,6 +32,12 @@ void to_lower_string(string& str){
     for(int i=0; i<(int)str.size(); i++){
         str[i] = tolower(str[i]);
     }
+}
+
+string remove_space(const string& str){
+    string str_copy(str);
+    str_copy.erase(remove(str_copy.begin(), str_copy.end(), ' '), str_copy.end());
+    return str_copy;
 }
 
 void SDebugger::assign_script(const string& path){
@@ -77,6 +82,12 @@ void SDebugger::exec_command(){
     else if(instruction == "delete"){
         delete_breakpoint(args);
     }
+    else if(instruction == "disasm" || instruction == "d"){
+        disasm(args);
+    }
+    else if(instruction == "dump" || instruction == "x"){
+        dump(args);
+    }
     else if(instruction == "exit" || instruction == "q"){
         exit();
     }
@@ -119,7 +130,7 @@ bool SDebugger::set_breakpoint(const std::string& address){
     if(SDB_IS_RUNING(state)){
         unsigned long target = hex2ul(address);
         // check target within text section
-        if(target >= text_sec_max_addr){
+        if(target <= text_sec_min_addr || target >= text_sec_max_addr){
             err_msg(ERR_MSG_ADDRESS_OUT_OF_TEXT);
             return false;
         }
@@ -153,6 +164,10 @@ bool SDebugger::cont(){
         regs_t regs;
         __getregs(regs);
         if(__is_breakpoint(regs.rip)){
+            // recover instruction
+            if(!__unset_breakpoint(regs.rip)){
+                err_quit(ERR_MSG_RECOVER_INSTRUCTION_FAILED);
+            }
             // step
             ptrace(PTRACE_SINGLESTEP, child_process, 0, 0);
             waitpid(child_process, 0, 0);
@@ -173,14 +188,9 @@ bool SDebugger::cont(){
                 char str[128]={};
                 sprintf(str, SDB_MSG_BREAKPOINT, regs.rip-1);
                 err_msg(string(str));
-                // recover instruction
-                if(__recover_breakpoint(regs.rip-1)){ 
-                    // back to restore code
-                    regs.rip = regs.rip-1;
-                    __setregs(regs);
-                }else{
-                    err_quit(ERR_MSG_RECOVER_INSTRUCTION_FAILED);
-                }
+                // back to breakpoint
+                regs.rip = regs.rip-1;
+                __setregs(regs);
             }
         }
         return true;
@@ -202,7 +212,7 @@ bool SDebugger::delete_breakpoint(const std::string& id){
         }
 
         unsigned long addr = breakpoints_addrs[ind];
-        if(__recover_breakpoint(addr)){
+        if(__unset_breakpoint(addr)){
             breakpoints.erase(addr);
             breakpoints_addrs.erase(breakpoints_addrs.begin()+ind);
         }
@@ -217,6 +227,96 @@ bool SDebugger::delete_breakpoint(const std::string& id){
     return false;
 }
 
+void SDebugger::disasm(const std::string& address)const{
+    if(SDB_IS_RUNING(state)){
+        // check address is given
+        string addr_strip = remove_space(address);
+        if(addr_strip==""){
+            err_msg(ERR_MSG_ADDRESS_NOT_GIVEN);
+            return;
+        }
+        // check address in text section
+        unsigned long start_addr = hex2ul(addr_strip);
+        if(start_addr < text_sec_min_addr || start_addr >= text_sec_max_addr){
+            err_msg(ERR_MSG_ADDRESS_OUT_OF_TEXT);
+            return;
+        }
+        // x86 instruction size: 1~15 bytes
+        // 10 instructions => maximum 150 bytes
+        int ind = 0; uint8_t buf[152] = {}; // 152(8 * 19) bytes buffer
+        unsigned long cur_addr = start_addr, max_addr = min(start_addr + 150, text_sec_max_addr); // read range
+        while (cur_addr < text_sec_max_addr){ // read until max_addr
+            unsigned long code = __peek_code(cur_addr);
+            for(int i=0; i<8; i++){
+                if(__is_breakpoint(cur_addr+i)){
+                    unsigned long origin_code = breakpoints.find(cur_addr+i)->second;
+                    buf[ind++] = (uint8_t)origin_code&SDB_TEXT_BYTE_MASK;
+                }else{
+                    buf[ind++] = (uint8_t)code&SDB_TEXT_BYTE_MASK;
+                }
+                code = code>>8;
+            }
+            cur_addr += 8;
+        }
+        // disasm
+        cs_insn *ins;
+        int count = cs_disasm(cs_handler, (uint8_t*)buf, max_addr-start_addr, start_addr, 0, &ins);
+        // print
+        if(count > 0){
+            for(int i=0; i<min(count, 10); ++i){
+                int n_bytes = ins[i].size;
+                printf("%lx:", ins[i].address);
+                for(int j=0; j<16; ++j){
+                    if(j<n_bytes)printf(" %02x", ins[i].bytes[j]);
+                    else printf("   ");
+                }
+                printf("%s    %s\n", ins[i].mnemonic, ins[i].op_str);
+            }
+            if(count<10)err_msg(ERR_MSG_ADDRESS_OUT_OF_TEXT);
+            cs_free(ins, count);
+        }else{
+            err_msg(ERR_MSG_DISASM_FAILED);
+        }
+    }
+    else{
+        err_msg(ERR_MSG_PROGRAM_NOT_RUNNING);
+    }
+}
+
+void SDebugger::dump(const std::string& address)const{
+    if(SDB_IS_RUNING(state)){
+        string addr_strip = remove_space(address);
+        if(addr_strip==""){
+            err_msg(ERR_MSG_ADDRESS_NOT_GIVEN);
+            return;
+        }
+        else{
+            unsigned long cur_addr = hex2ul(addr_strip);
+            // print 5 lines
+            for(int i=0; i<5; ++i){
+                printf("%lx:", cur_addr + i * 16);
+                char text[17] = {};
+                // each line has 2 code(16 byte)
+                for(int j=0; j<2; ++j){
+                    unsigned long code = __peek_code(cur_addr + i * 16 + j * 8);
+                    for(int k=0; k<8; ++k){
+                        unsigned char byte = code & SDB_TEXT_BYTE_MASK;
+                        code = code>>8;
+
+                        printf(" %02x", byte);
+                        if(isprint(byte))text[j*8+k] = byte;
+                        else text[j*8+k] = '.';
+                    }
+                }
+                printf("  |%s|\n", text);
+            }
+        }
+    }
+    else{
+        err_msg(ERR_MSG_PROGRAM_NOT_RUNNING);
+    }
+}
+
 void SDebugger::exit(){
     if(SDB_IS_RUNING(state)){
         kill(child_process, 9);
@@ -228,7 +328,7 @@ void SDebugger::getreg(const std::string& reg)const{
     if(SDB_IS_RUNING(state)){
         regs_t regs;
         __getregs(regs);
-        string reg_l(reg);
+        string reg_l = remove_space(reg);
         to_lower_string(reg_l);
 
         unsigned long long value;
@@ -318,16 +418,17 @@ bool SDebugger::load(const string& path){
         return false;
     }else{
         // open elf
-        FILE* fp = fopen(path.c_str(), "r");
+        string path_strip = remove_space(path);
+        FILE* fp = fopen(path_strip.c_str(), "r");
         if (fp == NULL){
             char str[512]={};
-            sprintf(str, ERR_MSG_OPEN_FAILED, path.c_str());
+            sprintf(str, ERR_MSG_OPEN_FAILED, path_strip.c_str());
             err_msg(str);
             return false;
         }
         // check is elf and get type
         char tmp[5]={};
-        fread(tmp, 1, 4, fp);
+        fread(tmp, 1, 5, fp);
         if(tmp[0] != 0x7F || tmp[1] != 'E' || tmp[2] != 'L' || tmp[3] != 'F'){
             err_msg(ERR_MSG_FILE_IS_NOT_ELF);
             return false;
@@ -337,8 +438,11 @@ bool SDebugger::load(const string& path){
         fseek(fp, 0, SEEK_SET);
         if(elf_cla==1){ // 32 bits
             fread(&hdr32, 1, sizeof(Elf32_Ehdr), fp);
-        }else{ // 64 bits
+        }else if(elf_cla==2){ // 64 bits
             fread(&hdr64, 1, sizeof(Elf64_Ehdr), fp);
+        }else{
+            err_msg(ERR_MSG_UNKNOWN_ELF_CLASS);
+            return false;
         }
         // read sections
         if(elf_cla==1){ // 32 bits
@@ -384,17 +488,19 @@ bool SDebugger::load(const string& path){
             }
         }
         // load
-        program_file = path;
+        program_file = path_strip;
         state |= SDB_STATE_PROGRAM_LOADED;
         char str[512]={};
         if(elf_cla==1){
+            text_sec_min_addr = (unsigned long)hdr32.e_entry;
             sprintf(str, SDB_MSG_LOAD, program_file.c_str(), (unsigned long long)hdr32.e_entry);
         }else{
+            text_sec_min_addr = (unsigned long)hdr64.e_entry;
             sprintf(str, SDB_MSG_LOAD, program_file.c_str(), (unsigned long long)hdr64.e_entry);
         }
         err_msg(string(str));
         fclose(fp);
-        
+        __init_disasm();
         return true;
     }
 }
@@ -500,25 +606,28 @@ bool SDebugger::step_ins(){
         // record rip
         regs_t regs;
         __getregs(regs);
+        // check if current is a breakpoint
+        if(__is_breakpoint(regs.rip)){
+            // recover instruction
+            if(!__unset_breakpoint(regs.rip)){
+                err_quit(ERR_MSG_RECOVER_INSTRUCTION_FAILED);
+            }
+        }
         // step
         ptrace(PTRACE_SINGLESTEP, child_process, 0, 0);
         waitpid(child_process, &child_status, 0);
-        // reset breakpoint 
+        // recover breakpoint if it is
         if(__is_breakpoint(regs.rip)) __set_breakpoint(regs.rip);
         // handle child status
         if(WIFEXITED(child_status)){ // terminate
             __child_terminate();
         }else{
             __getregs(regs);
-            if(__is_breakpoint(regs.rip)){ // next instruction is a breakpoint
+            if(__is_breakpoint(regs.rip)){ // is a breakpoint
                 // show breakpoint message
                 char str[128]={};
                 sprintf(str, SDB_MSG_BREAKPOINT, regs.rip);
                 err_msg(string(str));
-                // recover instruction
-                if(!__recover_breakpoint(regs.rip)){
-                    err_quit(ERR_MSG_RECOVER_INSTRUCTION_FAILED);
-                }
             }
         }
         
@@ -653,7 +762,7 @@ bool SDebugger::__set_breakpoint(unsigned long addr){
   WARNING: 
     This function DOES NOT check the child state, make sure child process is running.
 **/
-bool SDebugger::__recover_breakpoint(unsigned long addr){
+bool SDebugger::__unset_breakpoint(unsigned long addr){
     if(__is_breakpoint(addr)){
         return __poke_byte_code(addr, breakpoints[addr]);
     }
@@ -674,6 +783,21 @@ void SDebugger::__child_terminate(){
         sprintf(str, SDB_MSG_ABNORMAL_TERMINATE, child_process, es);
     }
     err_msg(str);
+}
+
+bool SDebugger::__init_disasm(){
+    // open cs_handler
+    if(elf_cla==1){ // 32 bit
+        if(cs_open(CS_ARCH_X86, CS_MODE_32, &cs_handler) != CS_ERR_OK)return false;
+    }else if(elf_cla==2){  // 64 bit
+        if(cs_open(CS_ARCH_X86, CS_MODE_64, &cs_handler) != CS_ERR_OK)return false;
+    }else {return false;}
+    return true;
+}
+
+void SDebugger::__close_disasm(){
+    // close cs_handler
+    cs_close(&cs_handler);
 }
 
 void SDebugger::__setup_all_breakpoint(){
