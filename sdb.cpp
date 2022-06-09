@@ -50,6 +50,10 @@ void SDebugger::assign_script(const string& path){
 void SDebugger::fetch_command(){
     istream* cmd_istream;
     if(SDB_HAS_SCRIPT(state)){ // read from script
+        if((script_stream.peek()==EOF)){ // exit while finish the script 
+            state &= ~SDB_STATE_HAVE_SCRIPT;
+            sdb_exit();
+        }
         cmd_istream = &script_stream;
     }else{ // read from user input
         printf("sdb> ");
@@ -57,10 +61,6 @@ void SDebugger::fetch_command(){
     }
     
     getline(*cmd_istream, command);
-
-    if(SDB_HAS_SCRIPT(state) && (script_stream.peek()==EOF)){
-        state &= ~SDB_STATE_HAVE_SCRIPT;
-    }
 }
 
 void SDebugger::exec_command(){
@@ -89,7 +89,7 @@ void SDebugger::exec_command(){
         dump(args);
     }
     else if(instruction == "exit" || instruction == "q"){
-        exit();
+        sdb_exit();
     }
     else if(instruction == "get" || instruction == "g"){
         getreg(args);
@@ -317,7 +317,7 @@ void SDebugger::dump(const std::string& address)const{
     }
 }
 
-void SDebugger::exit(){
+void SDebugger::sdb_exit(){
     if(SDB_IS_RUNING(state)){
         kill(child_process, 9);
     }

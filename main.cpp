@@ -52,12 +52,11 @@ void pars_arg(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     pars_arg(argc, argv);
-
+    setvbuf(stdout, NULL, _IONBF, 0);
     while (!debugger.is_closed())
     {
         debugger.fetch_command();
         debugger.exec_command();
     }
-    
     return 0;
 }

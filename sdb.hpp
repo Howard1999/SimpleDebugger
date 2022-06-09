@@ -82,7 +82,7 @@ namespace sdb{
             bool delete_breakpoint(const std::string& id);
             void disasm(const std::string& address)const;
             void dump(const std::string& address)const;
-            void exit();
+            void sdb_exit();
             void getreg(const std::string& reg)const;
             void getregs()const;
             void help()const;
