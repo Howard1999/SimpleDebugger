@@ -270,7 +270,7 @@ void SDebugger::disasm(const std::string& address)const{
                     if(j<n_bytes)printf(" %02x", ins[i].bytes[j]);
                     else printf("   ");
                 }
-                printf("%s    %s\n", ins[i].mnemonic, ins[i].op_str);
+                printf("%-7s %s\n", ins[i].mnemonic, ins[i].op_str);
             }
             if(count<10)err_msg(ERR_MSG_ADDRESS_OUT_OF_TEXT);
             cs_free(ins, count);
