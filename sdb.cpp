@@ -64,6 +64,7 @@ void SDebugger::fetch_command(){
 }
 
 void SDebugger::exec_command(){
+    if(is_closed()) return;
     if(command.size()<=0) return;
 
     // read instruction
@@ -547,7 +548,7 @@ void SDebugger::vmmap()const{
 
             unsigned long from, to;
             sscanf(seg.c_str(), "%lx-%lx", &from, &to);
-            printf("%016lx-%016lx\t%s\t%s\n", from, to, flags.substr(0, 3).c_str(), file_name.c_str());
+            printf("%016lx-%016lx %s %lu   %s\n", from, to, flags.substr(0, 3).c_str(), hex2ul(pgoff), file_name.c_str());
         }
     }
 }
