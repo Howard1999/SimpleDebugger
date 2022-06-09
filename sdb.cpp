@@ -245,7 +245,7 @@ void SDebugger::disasm(const std::string& address)const{
         // 10 instructions => maximum 150 bytes
         int ind = 0; uint8_t buf[152] = {}; // 152(8 * 19) bytes buffer
         unsigned long cur_addr = start_addr, max_addr = min(start_addr + 150, text_sec_max_addr); // read range
-        while (cur_addr < text_sec_max_addr){ // read until max_addr
+        while (cur_addr < max_addr){ // read until max_addr
             unsigned long code = __peek_code(cur_addr);
             for(int i=0; i<8; i++){
                 if(__is_breakpoint(cur_addr+i)){

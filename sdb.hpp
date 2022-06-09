@@ -34,7 +34,7 @@
 
 #define WARNING_MSG_ALREADY_RUNNING         "program '%s' is already running"
 
-#define ERR_MSG_UNKNOWN_INSTRUCTION         "unknown instrction"
+#define ERR_MSG_UNKNOWN_INSTRUCTION         "unknown instruction"
 #define ERR_MSG_PROGRAM_NOT_RUNNING         "program is not running"
 #define ERR_MSG_ADDRESS_OUT_OF_TEXT         "the address is out of the range of the text segment"
 #define ERR_MSG_BREAKPOINT_EXIST            "breakpoint already exist"
