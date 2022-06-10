@@ -51,6 +51,7 @@
 #define ERR_MSG_CHILD_PROCESS_INIT_FAILED   "child process initialize failed"
 #define ERR_MSG_UNKNOWN_REGISTER_NAME       "unknown register"
 #define ERR_MSG_ADDRESS_NOT_GIVEN           "no addr is given"
+#define ERR_MSG_VALUE_NOT_GIVEN             "no value is given"
 #define ERR_MSG_UNKNOWN_ELF_CLASS           "unknown elf class, class only accept 1(32bit) and 2(64bit) elf file"
 #define ERR_MSG_DISASM_FAILED               "disam failed"
 #define ERR_MSG_UNKNOWN                     "unknown error happend"

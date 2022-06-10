@@ -173,7 +173,9 @@ bool SDebugger::cont(){
             ptrace(PTRACE_SINGLESTEP, child_process, 0, 0);
             waitpid(child_process, 0, 0);
             // reset breakpoint
-            __set_breakpoint(regs.rip);
+            if(!__set_breakpoint(regs.rip)){
+                err_quit(ERR_MSG_RECOVER_BREAKPOINT_FAILED);
+            }
         }
         // cont
         ptrace(PTRACE_CONT, child_process, 0, 0);
@@ -188,7 +190,7 @@ bool SDebugger::cont(){
                 // breakpoint message
                 char str[128]={};
                 sprintf(str, SDB_MSG_BREAKPOINT, regs.rip-1);
-                err_msg(string(str));
+                err_msg(str);
                 // back to breakpoint
                 regs.rip = regs.rip-1;
                 __setregs(regs);
@@ -210,12 +212,14 @@ bool SDebugger::delete_breakpoint(const std::string& id){
 
         if(ind<0 || ind >= (int)breakpoints.size()){
             err_msg(ERR_MSG_INDEX_OUT_OF_RANGE);
+            return false;
         }
 
         unsigned long addr = breakpoints_addrs[ind];
         if(__unset_breakpoint(addr)){
             breakpoints.erase(addr);
             breakpoints_addrs.erase(breakpoints_addrs.begin()+ind);
+            return true;
         }
         else{
             err_msg(ERR_MSG_DELETE_BREAKPOINT_FAILED);
@@ -261,7 +265,7 @@ void SDebugger::disasm(const std::string& address)const{
         }
         // disasm
         cs_insn *ins;
-        int count = cs_disasm(cs_handler, (uint8_t*)buf, max_addr-start_addr, start_addr, 0, &ins);
+        int count = cs_disasm(cs_handler, buf, max_addr-start_addr, start_addr, 0, &ins);
         // print
         if(count > 0){
             for(int i=0; i<min(count, 10); ++i){
@@ -286,31 +290,30 @@ void SDebugger::disasm(const std::string& address)const{
 
 void SDebugger::dump(const std::string& address)const{
     if(SDB_IS_RUNING(state)){
+        // check address is given
         string addr_strip = remove_space(address);
         if(addr_strip==""){
             err_msg(ERR_MSG_ADDRESS_NOT_GIVEN);
             return;
         }
-        else{
-            unsigned long cur_addr = hex2ul(addr_strip);
-            // print 5 lines
-            for(int i=0; i<5; ++i){
-                printf("%lx:", cur_addr + i * 16);
-                char text[17] = {};
-                // each line has 2 code(16 byte)
-                for(int j=0; j<2; ++j){
-                    unsigned long code = __peek_code(cur_addr + i * 16 + j * 8);
-                    for(int k=0; k<8; ++k){
-                        unsigned char byte = code & SDB_TEXT_BYTE_MASK;
-                        code = code>>8;
+        unsigned long cur_addr = hex2ul(addr_strip);
+        // print 5 lines
+        for(int i=0; i<5; ++i){
+            printf("%lx:", cur_addr + i * 16);
+            char text[17] = {};
+            // each line has 2 code(16 byte)
+            for(int j=0; j<2; ++j){
+                unsigned long code = __peek_code(cur_addr + i * 16 + j * 8);
+                for(int k=0; k<8; ++k){
+                    unsigned char byte = code & SDB_TEXT_BYTE_MASK;
+                    code = code>>8;
 
-                        printf(" %02x", byte);
-                        if(isprint(byte))text[j*8+k] = byte;
-                        else text[j*8+k] = '.';
-                    }
+                    printf(" %02x", byte);
+                    if(isprint(byte))text[j*8+k] = byte;
+                    else text[j*8+k] = '.';
                 }
-                printf("  |%s|\n", text);
             }
+            printf("  |%s|\n", text);
         }
     }
     else{
@@ -406,8 +409,7 @@ void SDebugger::help()const{
 
 void SDebugger::list()const{
     for(int i=0; i<(int)breakpoints_addrs.size(); i++){
-        map<unsigned long, unsigned long>::const_iterator it = breakpoints.find(breakpoints_addrs[i]);
-        printf("\t%d:\t%lx\n", i, it->first);
+        printf("  %d: %lx\n", i, breakpoints_addrs[i]);
     }
 }
 
@@ -427,7 +429,7 @@ bool SDebugger::load(const string& path){
             err_msg(str);
             return false;
         }
-        // check is elf and get type
+        // check is elf and get class
         char tmp[5]={};
         fread(tmp, 1, 5, fp);
         if(tmp[0] != 0x7F || tmp[1] != 'E' || tmp[2] != 'L' || tmp[3] != 'F'){
@@ -499,7 +501,7 @@ bool SDebugger::load(const string& path){
             text_sec_min_addr = (unsigned long)hdr64.e_entry;
             sprintf(str, SDB_MSG_LOAD, program_file.c_str(), (unsigned long long)hdr64.e_entry);
         }
-        err_msg(string(str));
+        err_msg(str);
         fclose(fp);
         __init_disasm();
         return true;
